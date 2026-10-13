@@ -44,6 +44,7 @@ uniform float delay_scale;
 uniform float wobble;
 uniform float swirl;
 uniform float swirl_falloff;
+uniform float burst;
 uniform float radius;
 uniform vec2 center;
 uniform int easing;
@@ -68,6 +69,9 @@ vec2 position() {
     float env = 4.0 * u * (1.0 - u);
     if (wobble > 0.0) {
         pos += wobble * env * sin(6.28318530718 * (in_freq * t + in_phase));
+    }
+    if (burst != 0.0) {
+        pos = center + (pos - center) * (1.0 + burst * env);
     }
     if (swirl != 0.0) {
         vec2 rel = pos - center;
@@ -314,6 +318,7 @@ class GpuRenderer:
             "wobble": cfg.wobble,
             "swirl": cfg.swirl,
             "swirl_falloff": cfg.swirl_falloff,
+            "burst": cfg.burst,
             "radius": float(self.animator.radius),
             "center": tuple(float(c) for c in self.animator.center),
             "easing": EASING_IDS[easing],

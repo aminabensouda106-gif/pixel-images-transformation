@@ -129,6 +129,8 @@ The design rule is **one-way data flow with a single hand-off object**: the solv
 │   │   ├── soft.py        soft particles + motion blur on the CPU (fluid look)
 │   │   └── gpu.py         the same soft look on the GPU with OpenGL shaders (real time)
 │   ├── live.py            live window and playback controls
+│   ├── drop.py            drag-and-drop handling (background solving)
+│   ├── sequence.py        seamless loops and photo-chain frame sequences
 │   ├── export.py          GIF and MP4 writers
 │   └── cli.py             `pixelshift` command (Typer)
 ├── tests/
@@ -204,9 +206,13 @@ The window title shows the current time, frame rate and speed. Useful options: `
 | `--solver` | `pipeline` | `sort`, `exact` (up to 64×64), `mediansplit`, `swaps`, `pipeline` |
 | `--style` | `soft` | `soft`: fluid glowing particles with motion blur. `pixel`: crisp scattered dust |
 | `--renderer` | `auto` | `auto`, `gpu` or `cpu`. `gpu` needs the `[gpu]` extra. The two renderers look the same to the eye, but the output is only bit-for-bit repeatable on the same renderer |
-| `--swirl` | 1.0 | Spiral rotation of the flow in radians (`0` for straight paths) |
+| `--transition` | `spiral` | Motion preset: `spiral`, `wave`, `burst`, `iris` (see [Transitions](#transitions)) |
+| `--swirl`, `--burst` | from preset | Spiral rotation in radians; outward burst strength (0 to 3). Override the preset |
+| `--wave-shape` | from preset | Direction of the departure sweep: `diagonal`, `horizontal`, `vertical`, `radial`, `radial_in` |
+| `--delay`, `--wave`, `--jitter` | from preset | How departures are spread over time: total spread, share that sweeps, share that is random |
 | `--blur` | 2.5 | Motion-blur trail length in frames (`soft` style) |
-| `--delay`, `--wave`, `--jitter` | 0.5, 0.6, 0.1 | How departures are spread over time: total spread, share that sweeps diagonally, share that is random |
+| `--loop` | off | Play A to B and back to A, so a GIF or video loops with no jump |
+| `--hold` | 0.8 s | How long to hold on the finished picture |
 | `--duration`, `--fps` | 3.5 s, 30 | Animation length and frame rate |
 | `--easing` | `smootherstep` | `linear`, `smoothstep`, `smootherstep`, `cubic` |
 | `--scale` | 4 | Output pixels per grid pixel |
@@ -229,7 +235,30 @@ pixelshift run -s me.jpg -t friend.jpg --size 256 -o final.png
 # A more dramatic spiral, or the older crisp "dust" look
 pixelshift run -s a.jpg -t b.jpg --swirl 2.0 --duration 5 -o spiral.mp4
 pixelshift run -s a.jpg -t b.jpg --style pixel --swirl 0 --wobble 1.5 -o dust.mp4
+
+# Other motion styles, and a GIF that loops forever (A to B and back to A)
+pixelshift run -s a.jpg -t b.jpg --transition iris -o iris.mp4
+pixelshift run -s a.jpg -t b.jpg --loop --size 96 --scale 3 --fps 20 -o loop.gif
+
+# Morph through several pictures in one video, closing the loop back to the first
+pixelshift chain a.jpg b.jpg c.jpg d.jpg --loop -o chain.mp4
 ```
+
+### Transitions
+
+`--transition` picks how the pixels move. Every preset can be fine-tuned with `--swirl`, `--burst`, `--wave-shape`, `--delay`, `--wave` and `--jitter`.
+
+| Preset | Look |
+|---|---|
+| `spiral` (default) | The whole picture swirls like a vortex, with a diagonal wave of departures |
+| `wave` | A clean sweep from left to right: one picture is replaced by the other like a wipe made of pixels |
+| `burst` | The picture explodes outward into a fine cloud, then pulls back together as the new picture |
+| `iris` | The change opens from the center and spreads outward |
+
+### Seamless loops and photo chains
+
+- `--loop` on `run` plays the morph forward, holds on the result, then plays it back, so the file ends exactly where it began. It loops with no visible jump.
+- `pixelshift chain` morphs through any number of pictures in order and writes one video. Each morph is built from the previous picture's own pixels. Because that picture then holds the earlier picture's colors, a short cross-fade (`--settle`) restores the real picture before the next morph begins, so there are no jumps. Add `--loop` to morph the last picture back into the first.
 
 **Developing**
 
@@ -250,7 +279,7 @@ mypy            # type checking
 | **M3** | Animation engine and CPU renderer, GIF export | ✅ done |
 | **M4** | CLI, MP4 export, documentation of results | ✅ done |
 | **M5** | GPU renderer and live window | ✅ done |
-| **M6** | Stretch: web version, drag-and-drop, more transitions | planned |
+| **M6** | Stretch features | partly done: drag and drop, four transitions, seamless loops and photo chains are ✅; a web version is planned |
 
 ### Measured performance
 
