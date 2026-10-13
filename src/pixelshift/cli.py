@@ -241,6 +241,9 @@ def live(
 ) -> None:
     """Open a window and watch SOURCE turn into TARGET. Needs the [gpu] extra.
 
+    Drag and drop: drop two images on the window to use them as source and target, or one image
+    to morph the current target into it.
+
     Keys: SPACE pause, R restart, B reverse, M loop mode, LEFT/RIGHT scrub, UP/DOWN speed,
     S screenshot, F fullscreen, ESC or Q quit.
     """
@@ -259,10 +262,22 @@ def live(
         swirl=swirl,
         seed=seed,
     )
-    mapping, _ = _solve(
+    mapping, target_img = _solve(
         source, target, size=size, lam=lam, solver=solver, color_space=color_space, seed=seed
     )
-    typer.echo("Opening window (press Q or ESC to quit) ...")
+    solver_obj = get_solver(solver)
+
+    def solve_pair(src: NDArray[np.uint8], tgt: NDArray[np.uint8]) -> Mapping:
+        return solve_images(
+            src,
+            tgt,
+            solver_obj,
+            lam=lam,
+            color_space=cast(ColorSpace, color_space),
+            seed=seed,
+        )
+
+    typer.echo("Opening window: drop images on it, press Q or ESC to quit ...")
     try:
         stats = run_live(
             mapping,
@@ -271,6 +286,8 @@ def live(
             vsync=vsync,
             fullscreen=fullscreen,
             mode=mode,
+            solve=solve_pair,
+            target_image=target_img,
         )
     except GpuUnavailableError as exc:
         raise _fail(str(exc)) from None

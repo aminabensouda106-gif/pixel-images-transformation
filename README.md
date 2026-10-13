@@ -183,6 +183,13 @@ With the extra installed, `pixelshift run` uses the GPU automatically (`--render
 | `F` | Toggle fullscreen |
 | `Esc` or `Q` | Quit |
 
+**Drag and drop.** Drag image files from your file manager onto the window:
+
+- **Two files at once:** the first becomes the source and the second the target.
+- **One file:** it becomes the new target, and the current target becomes the new source. Drop photo after photo and each one morphs into the next.
+
+Solving happens in the background, so the window keeps playing and switches to the new animation when it is ready (the title bar shows the progress). If a file cannot be read, the window keeps the current animation and shows the error in the title bar and the terminal. Dropped images use the same grid size (`--size`) as the one you started with.
+
 The window title shows the current time, frame rate and speed. Useful options: `--window 1024` (window size), `--mode loop`, `--fullscreen`, plus the same look options as `run` (`--swirl`, `--lam`, `--duration`, and so on).
 
 **Common options** (`pixelshift run --help` lists them all):

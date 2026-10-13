@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from pixelshift.live import HOLD_SECONDS, MODES, Playback, auto_scale
@@ -115,3 +117,68 @@ def test_run_live_smoke_with_a_hidden_window():
     except GpuUnavailableError as exc:
         pytest.skip(f"no window/OpenGL available: {exc}")
     assert stats.frames == 5 and stats.fps > 0
+
+
+def test_a_real_drop_event_swaps_in_a_new_animation(tmp_path):
+    """Drive the real window: simulate a file drop and check the new pair is loaded."""
+    import threading
+
+    import numpy as np
+    from PIL import Image
+
+    from pixelshift.animate import AnimationConfig
+    from pixelshift.live import run_live
+    from pixelshift.pipeline import solve_images
+    from pixelshift.render.gpu import GpuUnavailableError
+    from pixelshift.solvers import MedianSplitSolver
+
+    try:
+        import glfw
+    except ImportError:
+        pytest.skip("glfw not installed")
+
+    rng = np.random.default_rng(1)
+    a = rng.integers(0, 256, (16, 16, 3), dtype=np.uint8)
+    b = rng.integers(0, 256, (16, 16, 3), dtype=np.uint8)
+    dropped = tmp_path / "dropped.png"
+    Image.fromarray(rng.integers(0, 256, (16, 16, 3), dtype=np.uint8)).save(dropped)
+
+    solved: list[tuple[np.ndarray, np.ndarray]] = []
+
+    def solve(src, tgt):
+        solved.append((src, tgt))
+        return solve_images(src, tgt, MedianSplitSolver())
+
+    m = solve_images(a, b, MedianSplitSolver())
+
+    # glfw has no public API to inject a drop, so call the registered callback ourselves from a
+    # helper that runs once the window loop is up.
+    real_set = glfw.set_drop_callback
+
+    def capture(window, callback):
+        def fire():
+            time.sleep(0.2)
+            callback(window, [str(dropped)])
+
+        threading.Thread(target=fire, daemon=True).start()
+        return real_set(window, callback)
+
+    glfw.set_drop_callback = capture
+    try:
+        stats = run_live(
+            m,
+            AnimationConfig(duration=1.0),
+            max_frames=400,
+            vsync=True,
+            visible=False,
+            window_size=200,
+            solve=solve,
+            target_image=b,
+        )
+    except GpuUnavailableError as exc:
+        pytest.skip(f"no window/OpenGL available: {exc}")
+    finally:
+        glfw.set_drop_callback = real_set
+    assert stats.frames == 400
+    assert len(solved) == 1
+    assert np.array_equal(solved[0][0], b)  # the old target became the new source

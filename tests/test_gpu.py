@@ -102,3 +102,12 @@ def test_invalid_settings_are_rejected(ctx, mapping):
             GpuRenderer(anim, context=ctx, **bad)
     with pytest.raises(ValueError):
         GpuRenderer(anim, context=ctx).render(1.5)
+
+
+def test_release_frees_a_renderer_and_a_new_one_can_replace_it(ctx, mapping):
+    first = GpuRenderer(Animator(mapping, config()), scale=3, context=ctx)
+    before = first.frame(0.0)
+    first.release()
+    first.release()  # releasing twice is harmless
+    second = GpuRenderer(Animator(mapping, config()), scale=3, context=ctx)
+    assert np.array_equal(second.frame(0.0), before)

@@ -393,6 +393,30 @@ class GpuRenderer:
         for k in range(count):
             yield self.frame(k / (count - 1))
 
+    def release(self) -> None:
+        """Free this renderer's GPU objects. The OpenGL context itself is left alone."""
+        for name in (
+            "_acc_fbo",
+            "_crisp_fbo",
+            "_out_fbo",
+            "_acc",
+            "_crisp_tex",
+            "_out_tex",
+            "_soft_vao",
+            "_crisp_vao",
+            "_quad_resolve",
+            "_quad_blit",
+            "_soft",
+            "_crisp",
+            "_resolve",
+            "_blit",
+            "_particles",
+        ):
+            obj = getattr(self, name, None)
+            if obj is not None:
+                obj.release()
+                setattr(self, name, None)
+
     def blit(self, target: moderngl.Framebuffer, width: int, height: int) -> None:
         """Draw the last rendered frame into ``target``, centered and upright, keeping aspect."""
         side = min(width, height)

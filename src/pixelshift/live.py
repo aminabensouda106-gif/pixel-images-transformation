@@ -3,6 +3,9 @@
 Keys: SPACE pause/play, R restart, B reverse direction, M cycle loop mode (ping-pong / loop /
 once), LEFT / RIGHT scrub, UP / DOWN speed, S save a screenshot, F fullscreen, ESC or Q quit.
 
+Drag and drop: drop two images to use them as source and target, or drop one image to morph the
+current target into it. See :mod:`pixelshift.drop`.
+
 The playback logic lives in :class:`Playback` (plain Python, no graphics) so it can be tested
 without a window. :func:`run_live` needs the optional GPU dependencies:
 ``pip install -e ".[gpu]"``.
@@ -15,7 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+from numpy.typing import NDArray
+
 from pixelshift.animate import AnimationConfig, Animator
+from pixelshift.drop import DropHandler, SolveFn
 from pixelshift.mapping import Mapping
 from pixelshift.render.gpu import GpuRenderer, GpuUnavailableError
 
@@ -121,8 +128,15 @@ def run_live(
     max_frames: int | None = None,
     visible: bool = True,
     title: str = "pixelshift",
+    solve: SolveFn | None = None,
+    target_image: NDArray[np.uint8] | None = None,
 ) -> LiveStats:
-    """Open a window and play the transformation until it is closed (or ``max_frames``)."""
+    """Open a window and play the transformation until it is closed (or ``max_frames``).
+
+    Pass ``solve`` to enable drag and drop: files dropped on the window are loaded and solved with
+    it. ``target_image`` is the current target, which becomes the source when one file is dropped
+    (it defaults to the rearranged image).
+    """
     try:
         import glfw
         import moderngl
@@ -199,11 +213,51 @@ def run_live(
         if fullscreen:
             on_key(window, glfw.KEY_F, 0, glfw.PRESS, 0)
 
+        drops: DropHandler | None = None
+        status = ""
+        status_until = 0.0
+        if solve is not None:
+            drops = DropHandler(
+                mapping.n,
+                solve,
+                target_image if target_image is not None else mapping.result_image(),
+            )
+
+        def say(message: str, seconds: float = 4.0) -> None:
+            nonlocal status, status_until
+            status, status_until = message, time.perf_counter() + seconds
+            print(message)
+
+        def on_drop(_win: Any, paths: list[str]) -> None:
+            if drops is None:
+                say("drag and drop is not available here")
+            else:
+                say(drops.submit(paths), seconds=60.0)
+
+        # pyGLFW calls this with (window, list_of_paths); its type stub says otherwise
+        glfw.set_drop_callback(window, on_drop)  # type: ignore[arg-type]
+
         start = last = last_title = time.perf_counter()
         since_title = 0
         while not glfw.window_should_close(window):
             glfw.poll_events()
             now = time.perf_counter()
+            if drops is not None:
+                finished = drops.poll()
+                if finished is not None:
+                    if finished.mapping is not None:
+                        old = renderer
+                        renderer = GpuRenderer(
+                            Animator(finished.mapping, config),
+                            scale=renderer.scale,
+                            context=ctx,
+                        )
+                        old.release()
+                        play.restart()
+                        say("new pair loaded", seconds=2.0)
+                    else:
+                        say(finished.message)
+                    now = last = time.perf_counter()
             t = play.update(now - last)
             last = now
             renderer.render(t)
@@ -215,14 +269,19 @@ def run_live(
             if now - last_title >= 0.5:
                 fps = since_title / (now - last_title)
                 state = "paused" if play.paused else f"x{play.speed:.2f}"
-                glfw.set_window_title(
-                    window, f"{title} | t={t:.2f} | {fps:.0f} fps | {state} | {play.mode}"
-                )
+                info = f"{title} | t={t:.2f} | {fps:.0f} fps | {state} | {play.mode}"
+                if status and now < status_until:
+                    info += f" | {status}"
+                elif drops is not None:
+                    info += " | drop images here"
+                glfw.set_window_title(window, info)
                 last_title, since_title = now, 0
             if max_frames is not None and stats.frames >= max_frames:
                 break
         ctx.finish()
         stats.seconds = time.perf_counter() - start
+        if drops is not None:
+            drops.close()
         return stats
     finally:
         if window:
