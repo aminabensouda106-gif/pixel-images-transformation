@@ -2,7 +2,7 @@
 
 > Rebuild one picture using **only the pixels of another**. Every pixel of a *source* image is moved to a new position so that, together, they form a *target* image. No color is invented, blended or repainted: the output is a pure **permutation** of the source pixels, and the transformation is shown as an animation of the pixels travelling across the canvas.
 
-**Status:** 🚧 under active development. The core (solver, animation, CPU renderer, command-line tool, MP4/GIF export) works; the GPU renderer and live window are still planned. Progress follows the milestones in [`docs/PLAN.md`](docs/PLAN.md). Features marked *(planned)* do not exist yet.
+**Status:** 🚧 under active development. The solver, animation engine, CPU and GPU renderers, live window, command-line tool and MP4/GIF export all work. Progress follows the milestones in [`docs/PLAN.md`](docs/PLAN.md). Features marked *(planned)* do not exist yet.
 
 <p align="center">
   <img src="examples/gallery/face_a_to_face_b.gif" width="384" alt="The pixels of one portrait swirling into a different portrait">
@@ -71,7 +71,7 @@ Details and the mathematics are in [`docs/TECHNOLOGIES.md`](docs/TECHNOLOGIES.md
 | Exact solver | **SciPy** `linear_sum_assignment` | Reference/optimal solution for small grids and tile polishing |
 | Image I/O | **Pillow** (+ OpenCV optional) | Loading, cropping, Lanczos resampling |
 | Color science | Own CIELAB / OKLab implementation | Perceptual color distance |
-| GPU rendering | **moderngl** + GLSL shaders (+ `pygame` or `glfw` window) | Smooth 60 fps animation of 10⁵ to 10⁶ points |
+| GPU rendering | **moderngl** + GLSL shaders, **glfw** window (optional `[gpu]` extra) | Real-time animation of 10⁴ to 10⁵+ points |
 | Video / GIF export | **imageio** + FFmpeg (MP4), Pillow (GIF) | MP4 and GIF output |
 | CLI | **Typer** | Clean command-line interface |
 | Quality | **pytest**, **ruff**, **mypy**, GitHub Actions | Tests, lint, types, CI |
@@ -126,8 +126,9 @@ The design rule is **one-way data flow with a single hand-off object**: the solv
 │   ├── animate.py         easing, departure delays, wobble
 │   ├── render/
 │   │   ├── cpu.py         crisp "pixel dust" renderer (exact at the first and last frame)
-│   │   └── soft.py        soft particles + motion blur (default, fluid look)
-│   │                      (gpu.py is planned)
+│   │   ├── soft.py        soft particles + motion blur on the CPU (fluid look)
+│   │   └── gpu.py         the same soft look on the GPU with OpenGL shaders (real time)
+│   ├── live.py            live window and playback controls
 │   ├── export.py          GIF and MP4 writers
 │   └── cli.py             `pixelshift` command (Typer)
 ├── tests/
@@ -153,7 +154,36 @@ pip install -e .
 pixelshift run -s examples/inputs/face_a.png -t examples/inputs/face_b.png -o result.mp4
 ```
 
-The first run compiles the numeric kernels, so it takes a few extra seconds. Every later run reuses the compiled code. A 128 × 128 animation renders in roughly one minute.
+The first run compiles the numeric kernels, so it takes a few extra seconds. Every later run reuses the compiled code.
+
+### GPU renderer and live window (optional)
+
+Install the extra graphics packages to render on your graphics card and to watch the transformation in a window. They need a GPU and driver with OpenGL 3.3 or newer, which any recent laptop has.
+
+```bash
+pip install -e ".[gpu]"
+
+# Watch it in a window
+pixelshift live -s examples/inputs/face_a.png -t examples/inputs/face_b.png
+```
+
+With the extra installed, `pixelshift run` uses the GPU automatically (`--renderer auto`) and falls back to the CPU if no GPU is usable. A 128 × 128 animation then renders in about **1 second instead of about 1 minute**.
+
+**Live window controls**
+
+| Key | Action |
+|---|---|
+| `Space` | Pause / play |
+| `R` | Restart |
+| `B` | Reverse direction |
+| `M` | Cycle loop mode: ping-pong, loop, once |
+| `←` / `→` | Scrub backward / forward (pauses) |
+| `↑` / `↓` | Faster / slower |
+| `S` | Save a screenshot (`pixelshift_<time>.png`) |
+| `F` | Toggle fullscreen |
+| `Esc` or `Q` | Quit |
+
+The window title shows the current time, frame rate and speed. Useful options: `--window 1024` (window size), `--mode loop`, `--fullscreen`, plus the same look options as `run` (`--swirl`, `--lam`, `--duration`, and so on).
 
 **Common options** (`pixelshift run --help` lists them all):
 
@@ -166,6 +196,7 @@ The first run compiles the numeric kernels, so it takes a few extra seconds. Eve
 | `--lam` | 0.001 | Travel penalty. `0` gives the best likeness; larger values make pixels travel less far but add color error (see below) |
 | `--solver` | `pipeline` | `sort`, `exact` (up to 64×64), `mediansplit`, `swaps`, `pipeline` |
 | `--style` | `soft` | `soft`: fluid glowing particles with motion blur. `pixel`: crisp scattered dust |
+| `--renderer` | `auto` | `auto`, `gpu` or `cpu`. `gpu` needs the `[gpu]` extra. The two renderers look the same to the eye, but the output is only bit-for-bit repeatable on the same renderer |
 | `--swirl` | 1.0 | Spiral rotation of the flow in radians (`0` for straight paths) |
 | `--blur` | 2.5 | Motion-blur trail length in frames (`soft` style) |
 | `--delay`, `--wave`, `--jitter` | 0.5, 0.6, 0.1 | How departures are spread over time: total spread, share that sweeps diagonally, share that is random |
@@ -193,8 +224,6 @@ pixelshift run -s a.jpg -t b.jpg --swirl 2.0 --duration 5 -o spiral.mp4
 pixelshift run -s a.jpg -t b.jpg --style pixel --swirl 0 --wobble 1.5 -o dust.mp4
 ```
 
-A live window (`pixelshift live`) is planned for milestone M5.
-
 **Developing**
 
 ```bash
@@ -213,7 +242,7 @@ mypy            # type checking
 | **M2** | Median-split + parallel swap solver, benchmarked against the exact one | ✅ done |
 | **M3** | Animation engine and CPU renderer, GIF export | ✅ done |
 | **M4** | CLI, MP4 export, documentation of results | ✅ done |
-| **M5** | GPU renderer and live window | planned |
+| **M5** | GPU renderer and live window | ✅ done |
 | **M6** | Stretch: web version, drag-and-drop, more transitions | planned |
 
 ### Measured performance
@@ -227,6 +256,16 @@ Solver timings, measured on a 16-core laptop CPU with two portrait photos (rende
 | 256 × 256 | about 3.5 to 5 s | impractical | not measurable |
 
 Timings depend on your machine and core count.
+
+**GPU renderer.** Measured on an integrated AMD Radeon GPU (a laptop without a dedicated graphics card), with full quality (7 motion-blur samples per frame):
+
+| Grid | Points | Output | Frame rate |
+|---|---|---|---|
+| 128 × 128 | 16,384 | 768 px | about 110 fps (the live window holds 60 fps, the display limit) |
+| 256 × 256 | 65,536 | 768 px | about 49 fps |
+| 512 × 512 | 262,144 | 512 px | about 43 fps |
+
+Larger outputs and a dedicated graphics card change these numbers.
 
 Each milestone has acceptance criteria in [`docs/PLAN.md`](docs/PLAN.md).
 

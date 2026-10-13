@@ -109,10 +109,10 @@ class Animator:
             + cfg.delay_jitter * rng.random(dist.size)
         )
         self.delay = cfg.delay_strength * np.clip(mix, 0.0, 1.0)
-        self._center = np.full(2, (mapping.n - 1) / 2)
-        self._radius = max(mapping.n / np.sqrt(2), 1.0)
-        self._phase = rng.random((dist.size, 2))
-        self._freq = 1.0 + 2.0 * rng.random(dist.size)
+        self.center = np.full(2, (mapping.n - 1) / 2)
+        self.radius = max(mapping.n / np.sqrt(2), 1.0)
+        self.phase = rng.random((dist.size, 2))
+        self.freq = 1.0 + 2.0 * rng.random(dist.size)
         self._ease = EASINGS[cfg.easing]
 
     def positions(self, t: float) -> Float:
@@ -123,16 +123,16 @@ class Animator:
         u = np.clip((t - self.delay) / scale, 0.0, 1.0)
         pos = self.start + (self.end - self.start) * self._ease(u)[:, None]
         if self.config.wobble > 0:
-            angle = 2 * np.pi * (self._freq[:, None] * t + self._phase)
+            angle = 2 * np.pi * (self.freq[:, None] * t + self.phase)
             envelope = 4.0 * u * (1.0 - u)  # exactly 0 at u = 0 and u = 1
             pos = pos + (self.config.wobble * envelope)[:, None] * np.sin(angle)
         if self.config.swirl != 0:
-            rel = pos - self._center
-            r = np.clip(np.linalg.norm(rel, axis=1) / self._radius, 0.0, 1.0)
+            rel = pos - self.center
+            r = np.clip(np.linalg.norm(rel, axis=1) / self.radius, 0.0, 1.0)
             envelope = 4.0 * u * (1.0 - u)
             theta = self.config.swirl * envelope * (1.0 - self.config.swirl_falloff * r)
             cos, sin = np.cos(theta), np.sin(theta)
-            pos = self._center + np.stack(
+            pos = self.center + np.stack(
                 [rel[:, 0] * cos - rel[:, 1] * sin, rel[:, 0] * sin + rel[:, 1] * cos], axis=1
             )
         return pos
