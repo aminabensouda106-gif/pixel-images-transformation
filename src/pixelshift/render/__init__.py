@@ -4,5 +4,6 @@ from __future__ import annotations
 
 from pixelshift.render.base import Renderer
 from pixelshift.render.cpu import CpuRenderer
+from pixelshift.render.soft import SoftRenderer
 
-__all__ = ["CpuRenderer", "Renderer"]
+__all__ = ["CpuRenderer", "Renderer", "SoftRenderer"]

@@ -51,8 +51,13 @@ class AnimationConfig:
     """Timing and motion parameters.
 
     delay_strength: fraction of the timeline over which departures are spread (0 = all at once).
-    delay_jitter:   share of the delay that is random (rest is proportional to travel distance).
-    wobble:         amplitude of the sideways shake, in grid pixels (0 = straight lines).
+    delay_jitter:   share of the delay that is random.
+    delay_wave:     share of the delay that is a smooth diagonal sweep across the image, so
+                    neighboring pixels leave together. The remaining share follows travel distance.
+    wobble:         amplitude of a random sideways shake, in grid pixels (0 = none).
+    swirl:          peak rotation in radians of the whole flow around the image center. Each
+                    pixel's path bends into a spiral; 0 gives straight lines.
+    swirl_falloff:  how much weaker the swirl is at the image edge than at the center (0 to 1).
     """
 
     duration: float = 3.0
@@ -60,7 +65,10 @@ class AnimationConfig:
     easing: str = "smoothstep"
     delay_strength: float = 0.4
     delay_jitter: float = 0.5
+    delay_wave: float = 0.0
     wobble: float = 0.0
+    swirl: float = 0.0
+    swirl_falloff: float = 0.6
     seed: int = 0
 
     def __post_init__(self) -> None:
@@ -70,6 +78,10 @@ class AnimationConfig:
             raise ValueError("delay_strength must be in [0, 1)")
         if not 0 <= self.delay_jitter <= 1:
             raise ValueError("delay_jitter must be in [0, 1]")
+        if not 0 <= self.delay_wave <= 1 or self.delay_jitter + self.delay_wave > 1:
+            raise ValueError("delay_wave must be in [0, 1] and delay_jitter + delay_wave <= 1")
+        if not 0 <= self.swirl_falloff <= 1:
+            raise ValueError("swirl_falloff must be in [0, 1]")
         if self.duration <= 0 or self.fps < 1:
             raise ValueError("duration and fps must be positive")
 
@@ -88,8 +100,17 @@ class Animator:
         rng = np.random.default_rng(cfg.seed)
         dist = np.linalg.norm(self.end - self.start, axis=1)
         dist_norm = dist / dist.max() if dist.max() > 0 else np.zeros_like(dist)
-        mix = (1 - cfg.delay_jitter) * dist_norm + cfg.delay_jitter * rng.random(dist.size)
-        self.delay = cfg.delay_strength * mix
+        side = max(mapping.n - 1, 1)
+        wave = (self.start[:, 0] + self.start[:, 1]) / (2 * side)  # 0 top-left .. 1 bottom-right
+        dist_share = 1 - cfg.delay_jitter - cfg.delay_wave
+        mix = (
+            dist_share * dist_norm
+            + cfg.delay_wave * wave
+            + cfg.delay_jitter * rng.random(dist.size)
+        )
+        self.delay = cfg.delay_strength * np.clip(mix, 0.0, 1.0)
+        self._center = np.full(2, (mapping.n - 1) / 2)
+        self._radius = max(mapping.n / np.sqrt(2), 1.0)
         self._phase = rng.random((dist.size, 2))
         self._freq = 1.0 + 2.0 * rng.random(dist.size)
         self._ease = EASINGS[cfg.easing]
@@ -105,4 +126,13 @@ class Animator:
             angle = 2 * np.pi * (self._freq[:, None] * t + self._phase)
             envelope = 4.0 * u * (1.0 - u)  # exactly 0 at u = 0 and u = 1
             pos = pos + (self.config.wobble * envelope)[:, None] * np.sin(angle)
+        if self.config.swirl != 0:
+            rel = pos - self._center
+            r = np.clip(np.linalg.norm(rel, axis=1) / self._radius, 0.0, 1.0)
+            envelope = 4.0 * u * (1.0 - u)
+            theta = self.config.swirl * envelope * (1.0 - self.config.swirl_falloff * r)
+            cos, sin = np.cos(theta), np.sin(theta)
+            pos = self._center + np.stack(
+                [rel[:, 0] * cos - rel[:, 1] * sin, rel[:, 0] * sin + rel[:, 1] * cos], axis=1
+            )
         return pos

@@ -18,7 +18,7 @@ def solve_images(
     target: NDArray[np.uint8],
     solver: Solver,
     *,
-    lam: float = 0.05,
+    lam: float = 0.001,
     color_space: ColorSpace = "oklab",
     seed: int = 0,
 ) -> Mapping:
