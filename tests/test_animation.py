@@ -104,3 +104,79 @@ def test_gif_last_frame_is_the_rearranged_image(mapping, tmp_path):
 def test_save_gif_rejects_empty():
     with pytest.raises(ValueError):
         save_gif("x.gif", [])
+
+
+# --- flow style: wave timing, swirl, soft renderer ---------------------------------------------
+
+
+def test_swirl_keeps_exact_endpoints_and_bends_paths(mapping):
+    anim = Animator(mapping, AnimationConfig(swirl=1.2, delay_wave=0.5))
+    assert np.array_equal(anim.positions(0.0), mapping.start_positions())
+    assert np.array_equal(anim.positions(1.0), mapping.end_positions())
+    straight = Animator(mapping, AnimationConfig(swirl=0.0, delay_wave=0.5))
+    assert not np.allclose(anim.positions(0.5), straight.positions(0.5))
+
+
+def test_wave_delay_is_a_smooth_sweep_across_the_image():
+    n = 10
+    src = few_color_image(1, n)
+    m = solve_images(src, src, ExactSolver(), lam=1.0)  # identity: pixels stay put
+    cfg = AnimationConfig(delay_strength=0.5, delay_jitter=0.0, delay_wave=1.0)
+    delay = Animator(m, cfg).delay.reshape(n, n)
+    assert delay[0, 0] == pytest.approx(0.0) and delay[-1, -1] == pytest.approx(0.5)
+    assert np.all(np.diff(delay, axis=1) > 0) and np.all(np.diff(delay, axis=0) > 0)
+
+
+def test_wave_and_jitter_shares_must_fit():
+    with pytest.raises(ValueError):
+        AnimationConfig(delay_wave=0.7, delay_jitter=0.6)
+    with pytest.raises(ValueError):
+        AnimationConfig(swirl_falloff=2.0)
+
+
+def make_soft(mapping, **kw):
+    from pixelshift.render import SoftRenderer
+
+    cfg = AnimationConfig(duration=1.0, fps=10, swirl=1.0, delay_wave=0.5, delay_strength=0.5)
+    return SoftRenderer(Animator(mapping, cfg), scale=3, **kw)
+
+
+def test_soft_renderer_first_and_last_frames_are_exact(mapping):
+    r = make_soft(mapping)
+    up = np.ones((3, 3, 1), dtype=np.uint8)
+    assert np.array_equal(r.frame(0.0), np.kron(mapping.source_rgb.reshape(8, 8, 3), up))
+    assert np.array_equal(r.frame(1.0), np.kron(mapping.result_image(), up))
+
+
+def test_soft_renderer_middle_frames_are_valid_and_deterministic(mapping):
+    r = make_soft(mapping)
+    f = r.frame(0.5)
+    assert f.shape == (24, 24, 3) and f.dtype == np.uint8
+    assert np.array_equal(f, make_soft(mapping).frame(0.5))
+    assert not np.array_equal(f, r.crisp.frame(0.5))  # actually soft, not the pixel render
+
+
+def test_soft_renderer_color_stays_inside_the_palette_hull(mapping):
+    f = make_soft(mapping).frame(0.5).astype(int)
+    lo = np.minimum(PALETTE.min(axis=0), np.array([12, 12, 16]))
+    hi = np.maximum(PALETTE.max(axis=0), np.array([12, 12, 16]))
+    assert (f >= lo - 1).all() and (f <= hi + 1).all()
+
+
+def test_soft_renderer_frames_count_and_no_blur_option(mapping):
+    r = make_soft(mapping, motion_blur=0.0, samples=1)
+    assert len(list(r.frames())) == 11
+    with pytest.raises(ValueError):
+        make_soft(mapping, softness=0.0)
+    with pytest.raises(ValueError):
+        make_soft(mapping, edge=0.9)
+
+
+def test_soft_frames_can_be_written_to_gif(mapping, tmp_path):
+    r = make_soft(mapping)
+    path = tmp_path / "soft.gif"
+    save_gif(path, r.frames(), fps=10)
+    with Image.open(path) as gif:
+        gif.seek(gif.n_frames - 1)
+        last = np.asarray(gif.convert("RGB"))
+    assert np.array_equal(last, np.kron(mapping.result_image(), np.ones((3, 3, 1), dtype=np.uint8)))

@@ -5,11 +5,9 @@
 **Status:** 🚧 under active development. The core (solver, animation, CPU renderer, command-line tool, MP4/GIF export) works; the GPU renderer and live window are still planned. Progress follows the milestones in [`docs/PLAN.md`](docs/PLAN.md). Features marked *(planned)* do not exist yet.
 
 <p align="center">
-  <img src="examples/gallery/palette_to_smiley.gif" width="288" alt="A rainbow palette rearranging itself into a smiley face">
-  &nbsp;&nbsp;
-  <img src="examples/gallery/sunset_to_heart.gif" width="288" alt="A sunset rearranging itself into a heart">
+  <img src="examples/gallery/face_a_to_face_b.gif" width="384" alt="The pixels of one portrait swirling into a different portrait">
 </p>
-<p align="center"><em>Left: a rainbow palette becomes a smiley. Right: a sunset becomes a heart. Same pixels, new arrangement.</em></p>
+<p align="center"><em>The pixels of the first portrait flow in a spiral and settle into the second portrait. No color is added: every pixel of the result comes from the first image. (A higher-quality <a href="examples/gallery/face_a_to_face_b.mp4">MP4</a> is in the gallery folder.)</em></p>
 
 ---
 
@@ -126,13 +124,15 @@ The design rule is **one-way data flow with a single hand-off object**: the solv
 │   ├── metrics.py         cost, color error, travel distance
 │   ├── pipeline.py        images in, Mapping out
 │   ├── animate.py         easing, departure delays, wobble
-│   ├── render/            cpu.py (gpu.py is planned)
+│   ├── render/
+│   │   ├── cpu.py         crisp "pixel dust" renderer (exact at the first and last frame)
+│   │   └── soft.py        soft particles + motion blur (default, fluid look)
+│   │                      (gpu.py is planned)
 │   ├── export.py          GIF and MP4 writers
 │   └── cli.py             `pixelshift` command (Typer)
 ├── tests/
 ├── examples/
-│   ├── make_inputs.py     generates the example input images
-│   ├── inputs/            example sources and targets
+│   ├── inputs/            the two example portraits
 │   └── gallery/           example outputs shown above
 └── .github/workflows/     CI
 ```
@@ -149,11 +149,11 @@ python -m venv .venv
 source .venv/bin/activate        # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -e .
 
-# Rebuild the pixels of a sunset into a heart (uses the bundled example images)
-pixelshift run -s examples/inputs/sunset.png -t examples/inputs/heart.png -o result.mp4
+# Turn the first portrait into the second (uses the bundled example images)
+pixelshift run -s examples/inputs/face_a.png -t examples/inputs/face_b.png -o result.mp4
 ```
 
-The first run compiles the numeric kernels, so it takes a few extra seconds. Every later run reuses the compiled code.
+The first run compiles the numeric kernels, so it takes a few extra seconds. Every later run reuses the compiled code. A 128 × 128 animation renders in roughly one minute.
 
 **Common options** (`pixelshift run --help` lists them all):
 
@@ -163,10 +163,14 @@ The first run compiles the numeric kernels, so it takes a few extra seconds. Eve
 | `-t`, `--target` | required | Image to rebuild |
 | `-o`, `--out` | `result.mp4` | `.mp4` or `.gif` for the animation, `.png` for the final image only |
 | `--size` | 128 | Grid side `N`; both images become `N × N` pixels |
-| `--lam` | 0.05 | Travel penalty. `0` gives the best likeness; larger values give shorter, smoother pixel movement |
+| `--lam` | 0.001 | Travel penalty. `0` gives the best likeness; larger values make pixels travel less far but add color error (see below) |
 | `--solver` | `pipeline` | `sort`, `exact` (up to 64×64), `mediansplit`, `swaps`, `pipeline` |
-| `--duration`, `--fps` | 3.0 s, 30 | Animation length and frame rate |
-| `--wobble` | 1.5 | Sideways shake in grid pixels (`0` for straight lines) |
+| `--style` | `soft` | `soft`: fluid glowing particles with motion blur. `pixel`: crisp scattered dust |
+| `--swirl` | 1.0 | Spiral rotation of the flow in radians (`0` for straight paths) |
+| `--blur` | 2.5 | Motion-blur trail length in frames (`soft` style) |
+| `--delay`, `--wave`, `--jitter` | 0.5, 0.6, 0.1 | How departures are spread over time: total spread, share that sweeps diagonally, share that is random |
+| `--duration`, `--fps` | 3.5 s, 30 | Animation length and frame rate |
+| `--easing` | `smootherstep` | `linear`, `smoothstep`, `smootherstep`, `cubic` |
 | `--scale` | 4 | Output pixels per grid pixel |
 | `--seed` | 0 | The output is deterministic for a given seed |
 | `--png` | none | Also save the final rearranged image |
@@ -174,14 +178,19 @@ The first run compiles the numeric kernels, so it takes a few extra seconds. Eve
 **Examples**
 
 ```bash
-# The two animations at the top of this page
-pixelshift run -s examples/inputs/palette.png -t examples/inputs/smiley.png \
-  --size 96 --scale 3 --fps 20 -o examples/gallery/palette_to_smiley.gif
-pixelshift run -s examples/inputs/sunset.png -t examples/inputs/heart.png \
-  --size 96 --scale 3 --fps 20 -o examples/gallery/sunset_to_heart.gif
+# The animation at the top of this page (GIF)
+pixelshift run -s examples/inputs/face_a.png -t examples/inputs/face_b.png \
+  --size 96 --scale 3 --fps 20 -o examples/gallery/face_a_to_face_b.gif
+
+# Same transformation, reversed direction
+pixelshift run -s examples/inputs/face_b.png -t examples/inputs/face_a.png -o reverse.mp4
 
 # Your own photos, larger grid, final image only
 pixelshift run -s me.jpg -t friend.jpg --size 256 -o final.png
+
+# A more dramatic spiral, or the older crisp "dust" look
+pixelshift run -s a.jpg -t b.jpg --swirl 2.0 --duration 5 -o spiral.mp4
+pixelshift run -s a.jpg -t b.jpg --style pixel --swirl 0 --wobble 1.5 -o dust.mp4
 ```
 
 A live window (`pixelshift live`) is planned for milestone M5.
@@ -209,7 +218,7 @@ mypy            # type checking
 
 ### Measured performance
 
-Measured on a 16-core laptop CPU, with two photos of faces at λ = 0.05 to 0.2:
+Solver timings, measured on a 16-core laptop CPU with two portrait photos (rendering the animation takes extra time, about 1 minute for 128 × 128 at the default settings):
 
 | Grid | Pipeline solver | Exact solver | Quality of pipeline |
 |---|---|---|---|
@@ -230,7 +239,7 @@ Each milestone has acceptance criteria in [`docs/PLAN.md`](docs/PLAN.md).
 ## Limitations
 
 - Source and target must have the same number of pixels, so both are cropped and resized to a common square grid. Fine detail in the target is limited by the **colors available in the source**: a source with no red cannot reproduce a red target.
-- When the colors of the two images differ a lot, the printed color error (ΔE) is high, and the result is a stylized version of the target made from the source's palette. The two images in the gallery above work that way on purpose.
+- **Likeness versus travel.** Matching colors perfectly lets pixels travel anywhere; asking them to stay close to home costs color accuracy. On the example portraits at 128 × 128 the color error (ΔE) is 2.3 at `--lam 0`, 2.9 at the default `0.001` (pixels travel 32% of the grid), 4.7 at `0.01`, and 6.8 at `0.06`. The default sits at the knee of that curve. When the two images' colors differ a lot, the printed ΔE is higher and the result is a stylized version of the target made from the source's palette.
 - Results are approximate: the fast solver does not guarantee the globally optimal permutation.
 - GIF files are limited to 256 colors per frame, so they shimmer slightly in flight. Use MP4 for the best quality.
 - Speed and memory depend on grid size. The exact solver is only practical on small grids.

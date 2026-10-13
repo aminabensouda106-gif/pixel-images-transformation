@@ -17,7 +17,7 @@ from pixelshift.features import ColorSpace
 from pixelshift.io import load_square, save_image
 from pixelshift.metrics import mean_delta_e, mean_displacement
 from pixelshift.pipeline import solve_images
-from pixelshift.render import CpuRenderer
+from pixelshift.render import CpuRenderer, SoftRenderer
 from pixelshift.solvers import get_solver
 
 app = typer.Typer(
@@ -58,15 +58,22 @@ def run(
         Path("result.mp4"), "--out", "-o", help=".mp4 or .gif (animation), or .png (final image)."
     ),
     size: int = typer.Option(128, min=2, help="Grid side N; both images become N x N pixels."),
-    lam: float = typer.Option(0.05, min=0.0, help="Travel penalty: 0 = best likeness."),
+    lam: float = typer.Option(
+        0.001, min=0.0, help="Travel penalty: 0 = best likeness, larger = shorter movement."
+    ),
     solver: str = typer.Option("pipeline", help="sort | exact | mediansplit | swaps | pipeline"),
     color_space: str = typer.Option("oklab", help="oklab | lab"),
     seed: int = typer.Option(0, help="Random seed (output is deterministic for a given seed)."),
-    duration: float = typer.Option(3.0, min=0.1, help="Animation length in seconds."),
+    duration: float = typer.Option(3.5, min=0.1, help="Animation length in seconds."),
     fps: int = typer.Option(30, min=1, max=120, help="Frames per second."),
-    easing: str = typer.Option("smoothstep", help="linear | smoothstep | smootherstep | cubic"),
+    easing: str = typer.Option("smootherstep", help="linear | smoothstep | smootherstep | cubic"),
+    style: str = typer.Option("soft", help="soft (fluid, motion blur) | pixel (crisp dust)"),
+    swirl: float = typer.Option(1.0, help="Peak spiral rotation in radians (0 = straight paths)."),
+    blur: float = typer.Option(2.5, min=0.0, help="Motion-blur trail length in frames (soft)."),
     delay: float = typer.Option(0.5, min=0.0, max=0.95, help="Spread of departure times (0-0.95)."),
-    wobble: float = typer.Option(1.5, min=0.0, help="Sideways shake in grid pixels."),
+    wave: float = typer.Option(0.6, min=0.0, max=1.0, help="Share of departure order that sweeps."),
+    jitter: float = typer.Option(0.1, min=0.0, max=1.0, help="Share of departure order at random."),
+    wobble: float = typer.Option(0.0, min=0.0, help="Random sideways shake in grid pixels."),
     scale: int = typer.Option(4, min=1, help="Output pixels per grid pixel."),
     png: Path | None = typer.Option(None, help="Also save the final rearranged image here."),
 ) -> None:
@@ -78,6 +85,8 @@ def run(
         raise _fail("color-space must be 'oklab' or 'lab'")
     if easing not in EASINGS:
         raise _fail(f"unknown easing {easing!r}; choose from {sorted(EASINGS)}")
+    if style not in ("soft", "pixel"):
+        raise _fail("style must be 'soft' or 'pixel'")
     try:
         solver_obj = get_solver(solver)
     except ValueError as exc:
@@ -120,15 +129,26 @@ def run(
         typer.echo(f"Saved final image: {out}")
         return
 
-    config = AnimationConfig(
-        duration=duration,
-        fps=fps,
-        easing=easing,
-        delay_strength=delay,
-        wobble=wobble,
-        seed=seed,
-    )
-    renderer = CpuRenderer(Animator(mapping, config), scale=scale)
+    try:
+        config = AnimationConfig(
+            duration=duration,
+            fps=fps,
+            easing=easing,
+            delay_strength=delay,
+            delay_jitter=jitter,
+            delay_wave=wave,
+            wobble=wobble,
+            swirl=swirl,
+            seed=seed,
+        )
+    except ValueError as exc:
+        raise _fail(str(exc)) from None
+    animator = Animator(mapping, config)
+    renderer: CpuRenderer | SoftRenderer
+    if style == "soft":
+        renderer = SoftRenderer(animator, scale=scale, motion_blur=blur)
+    else:
+        renderer = CpuRenderer(animator, scale=scale)
     typer.echo(f"Rendering {config.frame_count} frames ({renderer.size}x{renderer.size}) ...")
     t0 = time.perf_counter()
     writer = save_mp4 if suffix == ".mp4" else save_gif

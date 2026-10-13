@@ -140,3 +140,24 @@ def test_save_mp4_pads_odd_sizes_and_rejects_empty(tmp_path):
     assert next(iter(imageio.get_reader(str(out)))).shape[:2] == (6, 8)
     with pytest.raises(ValueError):
         save_mp4(tmp_path / "e.mp4", [])
+
+
+@pytest.mark.parametrize("style", ["soft", "pixel"])
+def test_both_styles_render(images, tmp_path, style):
+    a, b = images
+    out = tmp_path / f"{style}.gif"
+    r = run(
+        ["-s", str(a), "-t", str(b), "-o", str(out), "--size", "8", "--scale", "2",
+         "--duration", "0.4", "--fps", "10", "--style", style, "--swirl", "0.8"]
+    )  # fmt: skip
+    assert r.exit_code == 0, r.output
+    assert out.exists()
+
+
+def test_bad_style_and_bad_delay_mix_fail_cleanly(images, tmp_path):
+    a, b = images
+    base = ["-s", str(a), "-t", str(b), "-o", str(tmp_path / "o.gif"), "--size", "8"]
+    r = run([*base, "--style", "glitter"])
+    assert r.exit_code == 2 and "style" in r.output
+    r = run([*base, "--wave", "0.8", "--jitter", "0.5"])
+    assert r.exit_code == 2 and "delay_wave" in r.output
